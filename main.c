@@ -47,13 +47,9 @@ double price;
 // - running flag (volatile sig_atomic_t)
 // - market_pid
 
-int buffer_count(double buffer[]){
-    int count = 0;
-    for(int i = 0;i< size(buffer);i++){
-        count ++;
-    }
-    return count;
-}
+size_t buffer_count = 0;
+size_t buffer_read_idx = 0;
+size_t buffer_write_idx = 0;
 
 
 
