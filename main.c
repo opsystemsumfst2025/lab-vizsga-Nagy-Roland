@@ -15,15 +15,19 @@
 #define STOCK_LENGTH 4
 #define STOCK_NAME_LENGTH 4
 
+pthread_mutex_t wallet_mtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t buffer_mtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t tx_mtx     = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  buffer_cond = PTHREAD_COND_INITIALIZER;
 // TODO: Definiáld a Transaction struktúrát (láncolt lista)
 // Tartalmazzon: type, stock, quantity, price, next pointer
 
 typedef struct Transaction{
 char type[TYPE_LENGTH];
 char stock[STOCK_LENGTH];
-int quantiy;
+int quantity;
 double price;
-struct Transaction next*;
+struct Transaction *next;
 
 }Transaction;
 
@@ -47,28 +51,85 @@ double price;
 // - running flag (volatile sig_atomic_t)
 // - market_pid
 
+double price_buffer[BUFFER_SIZE];
 size_t buffer_count = 0;
 size_t buffer_read_idx = 0;
 size_t buffer_write_idx = 0;
+long wallet_balance = INITIAL_BALANCE;
+long stocks_owned;
+Transaction *transaction_head = NULL;
+static volatile sig_atomic_t running = 1;
+pid_t market_pid = -1;
 
 
-
-double price_buffer[BUFFER_SIZE];
 
 // TODO: Implementáld az add_transaction függvényt
 // malloc-al foglalj memóriát, töltsd ki a mezőket
 // mutex lock alatt add hozzá a láncolt lista elejéhez
+void add_transaction(const char *type, const char *stock, int quantity, double price){
+    Transaction tx* = malloc(sizeof(Transaction));
+    if(tx == NULL){
+        return;
+    }
+    strncpy(tx->type,type,sizeof(type));
+    tx->type[sizeof(tz->type)-1] = "0";
 
+    strncpy(tx->stock,stock,sizeof(type));
+    tx->stock[sizeof(tz->stock)-1] = "0";
+
+    tx-> quantity = quantity;
+    tx-> price = price;
+
+    pthread_mutex_lock(&tx_mtx);
+    tx->next = transaction_head;
+    transaction_head = tx;
+    pthread_mutex_unlock(&tx_mtx);
+    
+}
 
 // TODO: Implementáld a print_transactions függvényt
 // Járd végig a láncolt listát mutex lock alatt
 // Írd ki az összes tranzakciót
+
+void print_transaction(void){
+      pthread_mutex_lock(&tx_mtx);
+
+    Transaction *cur = transaction_head;
+    if (cur == NULL) {
+        printf("Nincs tranzakcio.\n");
+        pthread_mutex_unlock(&tx_mtx);
+        return;
+    }
+
+    printf("Tranzakciok:\n");
+    while (cur != NULL) {
+        printf("  %s %s qty=%d price=%.2f\n",
+               cur->type, cur->stock, cur->quantity, cur->price);
+        cur = cur->next;
+    }
+
+    pthread_mutex_unlock(&tx_mtx);
+}
 
 
 // TODO: Implementáld a free_transactions függvényt
 // FONTOS: Járd végig a listát és free()-zd az összes elemet
 // Ez kell a Valgrind tiszta kimenethez!
 
+void print_transaction(void){
+    pthread_mutex_lock(&tx_mtx);
+
+    Transaction *cur = transaction_head;
+    transaction_head = NULL;
+
+    pthread_mutex_unlock(&tx_mtx);
+    
+    while (cur != NULL) {
+        Transaction *next = cur-> next;
+        free(cur);
+        cur = next;
+    }   
+}
 
 // TODO: Signal handler (SIGINT)
 // Állítsd be a running flag-et 0-ra
