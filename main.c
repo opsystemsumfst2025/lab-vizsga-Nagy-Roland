@@ -72,10 +72,10 @@ void add_transaction(const char *type, const char *stock, int quantity, double p
         return;
     }
     strncpy(tx->type,type,sizeof(type));
-    tx->type[sizeof(tz->type)-1] = "0";
+    tx->type[sizeof(tx->type)-1] = "0";
 
     strncpy(tx->stock,stock,sizeof(type));
-    tx->stock[sizeof(tz->stock)-1] = "0";
+    tx->stock[sizeof(tx->stock)-1] = "0";
 
     tx-> quantity = quantity;
     tx-> price = price;
