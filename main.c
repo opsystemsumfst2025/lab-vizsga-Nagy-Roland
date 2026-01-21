@@ -136,12 +136,45 @@ void print_transaction(void){
 // Küldj SIGTERM-et a market_pid folyamatnak (kill függvény)
 // Ébreszd fel a szálakat (pthread_cond_broadcast)
 
+static void sigint_handler(int sig){
+
+    (void)sig;
+    running = 0;
+
+    if (market_pid > 0) {
+        kill(market_pid, SIGTERM);
+    }
+
+    pthread_cond_broadcast(&buffer_cond);
+}
 
 // TODO: Piac folyamat függvénye
 // Végtelen ciklusban:
 // - Generálj random részvénynevet és árat
 // - Írás a pipe_fd-re (write)
 // - sleep(1)
+static void market_process(int write_fd){
+
+srand((unsigned)time(NULL) ^ (unsigned)getpid());
+
+    while (1) {
+        const char *stock = stocks[rand() % num_stocks];
+
+     char line[64];
+        int len = snprintf(line, sizeof(line), "%s %.2f\n", stock, price);
+        if (len < 0) {
+            _exit(EXIT_SUCCESS);
+        }
+
+     ssize_t w = write(write_fd, line, (size_t)len);
+        if (w < 0) {
+            _exit(EXIT_SUCCESS);
+        }
+
+        sleep(1);
+        
+    }
+}
 
 
 // TODO: Kereskedő szál függvénye
