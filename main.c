@@ -11,14 +11,31 @@
 #define NUM_TRADERS 3
 #define BUFFER_SIZE 10
 #define INITIAL_BALANCE 10000.0
+#define TYPE_LENGTH 4
+#define STOCK_LENGTH 4
+#define STOCK_NAME_LENGTH 4
 
 // TODO: Definiáld a Transaction struktúrát (láncolt lista)
 // Tartalmazzon: type, stock, quantity, price, next pointer
+
+typedef struct Transaction{
+char type[TYPE_LENGTH];
+char stock[STOCK_LENGTH];
+int quantiy;
+double price;
+struct Transaction next*;
+
+}Transaction;
 
 
 // TODO: Definiáld a StockPrice struktúrát
 // Tartalmazzon: stock név, price
 
+typedef struct StockPrice{
+char stock_nev[STOCK_NAME_LENGTH];
+double price;
+
+}StockPrice;
 
 // TODO: Globális változók
 // - price_buffer tömb
@@ -30,6 +47,17 @@
 // - running flag (volatile sig_atomic_t)
 // - market_pid
 
+int buffer_count(double buffer[]){
+    int count = 0;
+    for(int i = 0;i< size(buffer);i++){
+        count ++;
+    }
+    return count;
+}
+
+
+
+double price_buffer[BUFFER_SIZE];
 
 // TODO: Implementáld az add_transaction függvényt
 // malloc-al foglalj memóriát, töltsd ki a mezőket
