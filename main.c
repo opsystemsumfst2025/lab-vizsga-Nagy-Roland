@@ -51,31 +51,34 @@ double price;
 // - running flag (volatile sig_atomic_t)
 // - market_pid
 
-double price_buffer[BUFFER_SIZE];
-size_t buffer_count = 0;
-size_t buffer_read_idx = 0;
-size_t buffer_write_idx = 0;
-long wallet_balance = INITIAL_BALANCE;
-long stocks_owned;
-Transaction *transaction_head = NULL;
-static volatile sig_atomic_t running = 1;
-pid_t market_pid = -1;
+static StockPrice price_buffer[BUFFER_SIZE];
+static size_t buffer_count = 0;
+static size_t buffer_read_idx = 0;
+static size_t buffer_write_idx = 0;
+static double wallet_balance = INITIAL_BALANCE;
+static long stocks_owned;
 
+static Transaction *transaction_head = NULL;
+static volatile sig_atomic_t running = 1;
+static pid_t market_pid = -1;
+
+static const char *stocks[] = {"AAPL", "TSLA", "MSFT", "AMZN", "NVDA", "GOOG"};
+static const int num_stocks = (int)(sizeof(stocks)/sizeof(stocks[0]));
 
 
 // TODO: Implementáld az add_transaction függvényt
 // malloc-al foglalj memóriát, töltsd ki a mezőket
 // mutex lock alatt add hozzá a láncolt lista elejéhez
 void add_transaction(const char *type, const char *stock, int quantity, double price){
-    Transaction tx* = malloc(sizeof(Transaction));
+    Transaction *tx = malloc(sizeof(Transaction));
     if(tx == NULL){
         return;
     }
-    strncpy(tx->type,type,sizeof(type));
-    tx->type[sizeof(tx->type)-1] = "0";
+    strncpy(tx->type,type,sizeof(tx->type));
+    tx->type[sizeof(tx->type)-1] = '\0';
 
-    strncpy(tx->stock,stock,sizeof(type));
-    tx->stock[sizeof(tx->stock)-1] = "0";
+    strncpy(tx->stock,stock,sizeof(tx->type));
+    tx->stock[sizeof(tx->stock)-1] = '\0';
 
     tx-> quantity = quantity;
     tx-> price = price;
@@ -116,7 +119,7 @@ void print_transaction(void){
 // FONTOS: Járd végig a listát és free()-zd az összes elemet
 // Ez kell a Valgrind tiszta kimenethez!
 
-void print_transaction(void){
+void free_transaction(void){
     pthread_mutex_lock(&tx_mtx);
 
     Transaction *cur = transaction_head;
@@ -176,6 +179,20 @@ srand((unsigned)time(NULL) ^ (unsigned)getpid());
     }
 }
 
+static void buffer_push(const StockPrice *sp) {
+    price_buffer[buffer_write_idx] = *sp;
+    buffer_write_idx = (buffer_write_idx + 1) % BUFFER_SIZE;
+    buffer_count++;
+}
+
+static int buffer_pop(StockPrice *out) {
+    if (buffer_count == 0) return 0;
+    *out = price_buffer[buffer_read_idx];
+    buffer_read_idx = (buffer_read_idx + 1) % BUFFER_SIZE;
+    buffer_count--;
+    return 1;
+}
+
 
 // TODO: Kereskedő szál függvénye
 // Végtelen ciklusban:
@@ -185,6 +202,65 @@ srand((unsigned)time(NULL) ^ (unsigned)getpid());
 // - wallet_balance módosítása (MUTEX!!!)
 // - add_transaction hívás
 
+static void *trader_thread(void *arg) {
+    int id = *(int *)arg;
+    free(arg);
+
+    unsigned seed = (unsigned)time(NULL) ^ (unsigned)(uintptr_t)pthread_self();
+
+    while (1) {
+        StockPrice sp;
+
+        pthread_mutex_lock(&buffer_mtx);
+        while (buffer_count == 0 && running) {
+            pthread_cond_wait(&buffer_cond, &buffer_mtx);
+        }
+
+        if (!running && buffer_count == 0) {
+            pthread_mutex_unlock(&buffer_mtx);
+            break;
+        }
+
+        (void)buffer_pop(&sp);
+        pthread_mutex_unlock(&buffer_mtx);
+
+        /* Döntés: 0=HOLD, 1=BUY, 2=SELL */
+        int decision = rand_r(&seed) % 3;
+        int qty = 1 + (rand_r(&seed) % 5);
+
+        if (decision == 1) { // BUY
+            pthread_mutex_lock(&wallet_mtx);
+            double cost = qty * sp.price;
+            if (wallet_balance >= cost) {
+                wallet_balance -= cost;
+                stocks_owned += qty;
+                pthread_mutex_unlock(&wallet_mtx);
+
+                add_transaction("BUY", sp.stock_nev, qty, sp.price);
+                printf("[Trader %d] BUY  %s qty=%d price=%.2f | balance=%.2f owned=%d\n",
+                       id, sp.stock_nev, qty, sp.price, wallet_balance, stocks_owned);
+            } else {
+                pthread_mutex_unlock(&wallet_mtx);
+            }
+        } else if (decision == 2) { // SELL
+            pthread_mutex_lock(&wallet_mtx);
+            if (stocks_owned >= qty) {
+                wallet_balance += qty * sp.price;
+                stocks_owned -= qty;
+                pthread_mutex_unlock(&wallet_mtx);
+
+                add_transaction("SELL", sp.stock_nev, qty, sp.price);
+                printf("[Trader %d] SELL %s qty=%d price=%.2f | balance=%.2f owned=%d\n",
+                       id, sp.stock_nev, qty, sp.price, wallet_balance, stocks_owned);
+            } else {
+                pthread_mutex_unlock(&wallet_mtx);
+            }
+        } else {
+            // HOLD (nem csinálunk semmit, mert az emberek ezt is “stratégiának” hívják)
+        }
+    }
+return NULL;
+}
 
 int main() {
     int pipe_fd[2];
@@ -200,21 +276,43 @@ int main() {
     
     // TODO: Signal handler regisztrálása
     // signal(SIGINT, ...);
-    
+    signal(SIGINT, sigint_handler);
     
     // TODO: Pipe létrehozása
     // pipe(pipe_fd);
-    
+     if (pipe(pipe_fd) != 0) {
+        return 1;
+    }
     
     // TODO: Fork - Piac folyamat indítása
     // market_pid = fork();
     // Ha gyerek (== 0): piac folyamat
     // Ha szülő: kereskedő szálak indítása
-    
+
+    market_pid = fork();
+    if (market_pid < 0) {
+        return 1;
+    }
+
+     if (market_pid == 0) {
+        close(pipe_fd[0]); 
+        market_process(pipe_fd[1]);
+        _exit(0);
+    }
+
+    close(pipe_fd[1]);
     
     // TODO: Kereskedő szálak indítása (pthread_create)
     // for ciklus, malloc az id-nak
-    
+
+     for (int i = 0; i < NUM_TRADERS; i++) {
+        int *id = (int *)malloc(sizeof(int));
+        if (!id) exit(1);
+        *id = i + 1;
+        if (pthread_create(&traders[i], NULL, trader_thread, id) != 0) {
+            exit(1);
+        }
+    }
     
     // TODO: Master ciklus
     // Olvasd a pipe-ot (read)
@@ -222,14 +320,80 @@ int main() {
     // Tedd be a bufferbe (mutex alatt!)
     // pthread_cond_broadcast
     
-    
+    char buf[256];
+    char line[256];
+    size_t line_len = 0;
+
+    while (running) {
+        ssize_t r = read(pipe_fd[0], buf, sizeof(buf));
+        if (r == 0) break;          // EOF
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            perror("read");
+            break;
+        }
+
+        for (ssize_t i = 0; i < r; i++) {
+            char c = buf[i];
+            if (c == '\n') {
+                line[line_len] = '\0';
+
+                StockPrice sp;
+                char stock[STOCK_NAME_LENGTH];
+                double price;
+
+                if (sscanf(line, "%4s %lf", stock, &price) == 2) {
+                    strncpy(sp.stock_nev, stock, sizeof(sp.stock_nev) - 1);
+                    sp.stock_nev[sizeof(sp.stock_nev) - 1] = '\0';
+                    sp.price = price;
+
+                    pthread_mutex_lock(&buffer_mtx);
+                    if (buffer_count < BUFFER_SIZE) {
+                        buffer_push(&sp);
+                        pthread_cond_broadcast(&buffer_cond);
+                    }
+                    pthread_mutex_unlock(&buffer_mtx);
+                }
+
+                line_len = 0;
+            } else {
+                if (line_len + 1 < sizeof(line)) {
+                    line[line_len++] = c;
+                }
+            }
+        }
+    }
     // TODO: Cleanup
     // pthread_join a szálakra
     // waitpid a Piac folyamatra
     // Végső kiírások
     // free_transactions()
     // mutex destroy
-    
+    running = 0;
+    pthread_cond_broadcast(&buffer_cond);
+
+    for (int i = 0; i < NUM_TRADERS; i++) {
+        pthread_join(traders[i], NULL);
+    }
+
+    close(pipe_fd[0]);
+
+    if (market_pid > 0) {
+        int status = 0;
+        waitpid(market_pid, &status, 0);
+    }
+
+    printf("\n=== VEGSO ALLAPOT ===\n");
+    printf("Egyenleg: %.2f $\n", wallet_balance);
+    printf("Reszvenyek: %d db\n", stocks_owned);
+    print_transactions();
+    free_transactions();
+
+    pthread_mutex_destroy(&wallet_mtx);
+    pthread_mutex_destroy(&buffer_mtx);
+    pthread_mutex_destroy(&tx_mtx);
+    pthread_cond_destroy(&buffer_cond);
+
     
     printf("\n[RENDSZER] Sikeres leallitas.\n");
     return 0;
