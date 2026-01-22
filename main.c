@@ -7,13 +7,15 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <stdint.h>
+#include <errno.h>
 
 #define NUM_TRADERS 3
 #define BUFFER_SIZE 10
 #define INITIAL_BALANCE 10000.0
-#define TYPE_LENGTH 4
-#define STOCK_LENGTH 4
-#define STOCK_NAME_LENGTH 4
+#define TYPE_LENGTH 5
+#define STOCK_LENGTH 5
+#define STOCK_NAME_LENGTH 5
 
 pthread_mutex_t wallet_mtx = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t buffer_mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -56,7 +58,7 @@ static size_t buffer_count = 0;
 static size_t buffer_read_idx = 0;
 static size_t buffer_write_idx = 0;
 static double wallet_balance = INITIAL_BALANCE;
-static long stocks_owned;
+static int stocks_owned;
 
 static Transaction *transaction_head = NULL;
 static volatile sig_atomic_t running = 1;
@@ -74,10 +76,10 @@ void add_transaction(const char *type, const char *stock, int quantity, double p
     if(tx == NULL){
         return;
     }
-    strncpy(tx->type,type,sizeof(tx->type));
+    strncpy(tx->type,type,sizeof(tx->type)-1);
     tx->type[sizeof(tx->type)-1] = '\0';
 
-    strncpy(tx->stock,stock,sizeof(tx->type));
+    strncpy(tx->stock,stock,sizeof(tx->stock)-1);
     tx->stock[sizeof(tx->stock)-1] = '\0';
 
     tx-> quantity = quantity;
@@ -94,7 +96,7 @@ void add_transaction(const char *type, const char *stock, int quantity, double p
 // Járd végig a láncolt listát mutex lock alatt
 // Írd ki az összes tranzakciót
 
-void print_transaction(void){
+void print_transactions(void){
       pthread_mutex_lock(&tx_mtx);
 
     Transaction *cur = transaction_head;
@@ -119,7 +121,7 @@ void print_transaction(void){
 // FONTOS: Járd végig a listát és free()-zd az összes elemet
 // Ez kell a Valgrind tiszta kimenethez!
 
-void free_transaction(void){
+void free_transactions(void){
     pthread_mutex_lock(&tx_mtx);
 
     Transaction *cur = transaction_head;
@@ -162,7 +164,7 @@ srand((unsigned)time(NULL) ^ (unsigned)getpid());
 
     while (1) {
         const char *stock = stocks[rand() % num_stocks];
-
+        double price = 10.0 + (rand() % 49001) / 100.0;
      char line[64];
         int len = snprintf(line, sizeof(line), "%s %.2f\n", stock, price);
         if (len < 0) {
@@ -398,3 +400,4 @@ int main() {
     printf("\n[RENDSZER] Sikeres leallitas.\n");
     return 0;
 }
+
